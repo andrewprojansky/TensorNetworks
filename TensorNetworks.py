@@ -36,6 +36,14 @@ def Make_TN(Psi, dim):
     TN[dim-1] = Psi
     return TN
 
+def Multiplication(TN, bi: str):
+    if len(TN.keys()) != len(bi):
+        print('projansky youre stinky')
+        return
+    else:
+        return np.linalg.multi_dot([x[int(bi[i])] for i,x in enumerate(TN.values())])
+    
+
 dim = 4
 initial_state = np.array([1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1])
 Psi = Psi_1(initial_state, 2**dim)
