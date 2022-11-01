@@ -53,20 +53,20 @@ class TensorNetwork:
             self.TNW[i] = u
             vh = vh[:rank,:]
             Psi = np.reshape(np.matmul(np.diag(s), vh), (rank*2, 2**(dim-2-i)))
-            print(Psi)
             prank = rank
-        Psi = Psi.reshape(2, 1, rank)
+        prank = 1
+        Psi = Psi.reshape(2, rank, prank)
         self.TNW[dim-1] = Psi
     
-    def Multiplication(TN, bi: str):
-        if len(TN.keys()) != len(bi):
+    def Multiplication(self, bi: str):
+        if len(self.TNW.keys()) != len(bi):
             print('Need new string')
             return
         else:
-            return np.linalg.multi_dot([x[int(bi[i])] for i,x in enumerate(TN.values())])
+            return np.linalg.multi_dot([x[int(bi[i])] for i,x in enumerate(self.TNW.values())])
     
 dim = 4
 initial_state = np.array([1,0,0,1,1,0,0,1,1,0,0,1,1,0,0,1])
-TN = TensorNetwork(initial_state, dim)
+TN = TensorNetwork(dim, initial_state)
 TN.Make_TN()
-TN.Multiplication(TN, '1111')
+TN.Multiplication('1111')
