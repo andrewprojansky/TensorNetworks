@@ -55,9 +55,6 @@ class TensorNetwork:
             print(Psi)
             prank = rank
         Psi = Psi.reshape(2, 1, rank)
-        #guarentees normalization for final matrix
-        for v in range(2):
-            Psi[v] = Psi[v]/(np.sqrt(np.matmul(Psi[v][0], Psi[v][0])))
         self.TNW[dim-1] = Psi
     
     def Multiplication(TN, bi: str):
