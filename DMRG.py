@@ -1,14 +1,14 @@
-# -*- coding: utf-8 -*-
+   # -*- coding: utf-8 -*-
 """
 DMRG.py
 ---------------------------------------------------------------------
 File for understanding DMRG through example of calculating ground state
 energy of XX chain with 1 site DMRG
 
-Q: For example encoded below, should converge to about -63... why doesn't 
-this code? Why does it converge so poorly? 
+Q: For example encoded below, should converge to about -63; I'm off by exactly
+a factor of two, and am unsure where
 
-    by Andrew Projansky - last modified 1/26/2023
+    by Andrew Projansky - last modified 1/30/2023
     
     Initialization of Hamiltonian and of MPS from 2 site DMRG example 
     on tensors.net ; by Glen Evenbly
@@ -22,9 +22,9 @@ from numpy import linalg as LA
 chi = 16;
 Nsites = 50;
 
-numsweeps = 4 # number of DMRG sweeps
-lanit = 2 # iterations of Lanczos method
-krydim = 8 # dimension of Krylov subspace
+numsweeps = 5 # number of DMRG sweeps
+lanit = 1 # iterations of Lanczos method
+krydim = 4 # dimension of Krylov subspace
 
 """
 
@@ -88,34 +88,100 @@ def Lanzcos(H, rjp, krydim, its):
         vector corresponding to lowest eigenstate of lanzcos hamiltonian
 
     """
+    k_l = [] ; a_l = [] ;b_l = [] ; qc = rjp/LA.norm(rjp) ; qp = 0 ; beta = 0
+    for k in range(1, krydim+1):
+        k_l.append(qc)
+        ze = H @ qc
+        alp = float(qc.T @ ze)
+        z = ze - alp * qc - beta*qp
+        beta = LA.norm(z)
+        a_l.append(alp) ; b_l.append(beta)
+        if beta == 0:
+            break
+        qp = qc ; qc = z/beta
     
-    for i in range(its):
-        k_v = [0 for x in range(krydim)]
-        a_i = [] ; b_i = []
-        bc = np.linalg.norm(rjp)
-        qmin = np.zeros((len(rjp),1))
-        j=1
-        while j < krydim+1:
-            if bc == 0:
-                break
-            qj = rjp/bc
-            aj = float(qj.T @ H @ qj)
-            rjp = H @ qj - aj * qj - bc * qmin
-            k_v[j-1] = rjp
-            bc = np.linalg.norm(rjp)
-            a_i.append(aj) ; b_i.append(bc);j=j+1
-            
-        dim = len(a_i)
-        b_i = b_i[:dim-1]
-        H_eff = np.diag(a_i) + np.diag(b_i, k=1)+ np.diag(b_i, k=-1)
-        d, u = LA.eig(H_eff)
-        leig = u.T[dim-1]
-        rjp = 0
-        for l in range(dim):
-            rjp = leig[l] * k_v[l]
+    dim = len(a_l)
+    b_l = b_l[:dim-1]
+    H_eff = np.diag(a_l) + np.diag(b_l, k=-1) +  np.diag(b_l, k=1)
+    d, u = LA.eig(H_eff)
+    effsort = np.argsort(d)
+    eff_e = u.T[effsort[0]]
+    V = np.array(k_l).T
+    rjp = (V @ eff_e).T
             
     return rjp
-        
+
+def contract(k, L, R):
+    """
+    For each optimization step, given site k, contracts transfer matrices
+    in L and R with bulk hamiltonian to get 6 legged effective Hamiltonian 
+    at site k
+
+    Parameters
+    ----------
+    k : site number
+        site being contracted around
+    L : array
+        array of transfer operators from left normalzied sites
+    R : array
+        array of transfer operators from right normalized sites
+
+    Returns
+    -------
+    H : array
+        6 legged tensor which acts on site k
+
+    """
+    if k != 0:
+        LT = np.tensordot(L[0],L[1], axes = ((1,0,2),(0,2,4)))
+        for x in range(k-1):
+            LT = np.tensordot(LT, L[x+2], axes=((0,1,2),(0,2,4)))
+    else:
+        LT = np.swapaxes(L[0],0,1)
+    
+    if k != Nsites-1:
+        RT = np.tensordot(R[Nsites-1], R[Nsites], axes=((1,3,5),(1,0,2)))
+        for y in range(Nsites-2, k, -1):
+            RT = np.tensordot(R[y], RT, axes=((1,3,5),(0,1,2)))
+    else:
+        RT = np.swapaxes(R[Nsites], 0,1)
+    h1 = np.tensordot(LT, M, axes=((1),(0)))
+    H = np.tensordot(h1, RT, axes=((2),(1)))
+    return H
+
+
+def init__ex_lanzcos(H, Ak):
+    """
+    Initializes and executes lanzcos method, by reshaping inputs into 
+    square matrices and vectors and then calling the Lanzcos function
+
+    Parameters
+    ----------
+    H : array
+        6 leg tensor of the effective hamiltonian on site k
+    Ak : array
+        tensor of MPS at site k
+
+    Returns
+    -------
+    upPsi : array
+        approximated lowest eigenvector of H
+    d1 : int
+        dimension of left bond of tensor Ak
+    d2 : int
+        dimension of physical bond of tensor Ak
+    d3 : int
+        dimension of right bond of tensor Ak
+
+    """
+
+    re_H = np.transpose(H, (1,3,5,0,2,4))
+    d1 = re_H.shape[0] ; d2 = re_H.shape[1]; d3 = re_H.shape[2]; hd = d1*d2*d3
+    Hmat = np.reshape(re_H, (hd,hd))
+    Psi = np.reshape(Ak, (hd,1))
+    upPsi = Lanzcos(Hmat, Psi, krydim, lanit)
+    return upPsi, d1, d2, d3
+#%%  
 #### Initialize random MPS tensor with maximum bond chi
 A = [0 for x in range(Nsites)]
 A[0] = np.random.rand(1,d,d)
@@ -148,6 +214,8 @@ for j in range(Nsites-1, 0, -1):
     t1 = np.tensordot(A[j], M, axes=((1),(2)))
     R[j] = np.tensordot(t1, np.conj(A[j]), axes=((4),(1)))
     
+#%%
+    
 """
 
 Conducts sweeps for optimizing tensors at each site, starting with site 0 and
@@ -157,33 +225,8 @@ sweeping towards the right
 for j in range(numsweeps):
     #Left Sweep
     for k in range(Nsites-1):
-        """
-        
-        Contracts all left normalized transfer operators and right normalized
-        transfer operators to get hamiltonian operator. 
-        
-        """
-        if k != 0:
-            LT = np.tensordot(L[0],L[1], axes = ((1,0,2),(0,2,4)))
-            for x in range(k-1):
-                LT = np.tensordot(LT, L[x+2], axes=((0,1,2),(0,2,4)))
-        else:
-            LT = np.swapaxes(L[0],0,1)
-        RT = np.tensordot(R[Nsites-1], R[Nsites], axes=((1,3,5),(1,0,2)))
-        for y in range(Nsites-2, k, -1):
-            RT = np.tensordot(R[y], RT, axes=((1,3,5),(0,1,2)))
-        h1 = np.tensordot(LT, M, axes=((1),(0)))
-        H = np.tensordot(h1, RT, axes=((2),(1)))
-        """
-        Re-orders H tensor into correct order for reshaping into a square
-        matrix. Then shapes tensor at target site into vector, before passing 
-        through Lanzcos algorithm
-        """
-        re_H = np.transpose(H, (1,3,5,0,2,4))
-        dim = re_H.shape[0]*re_H.shape[1]*re_H.shape[2]
-        Hmat = np.reshape(re_H, (dim,dim))
-        Psi = np.reshape(A[k], (dim,1))
-        upPsi = Lanzcos(Hmat, Psi, krydim, lanit)
+        H = contract(k,L,R)
+        upPsi, d1, d2, d3 = init__ex_lanzcos(H, A[k])
         """
         Re-shapes updated Psi back into site tensor, before svd to make new 
         site left normalized. When sent through svd, reshaped with physical 
@@ -191,63 +234,45 @@ for j in range(numsweeps):
         correct ordered information, and right normalized part of svd can be 
         reshaped into node to the right 
         """
-        A[k] = np.reshape(upPsi, (re_H.shape[0], re_H.shape[1], re_H.shape[2]))
+        A[k] = np.reshape(upPsi, (d1, d2, d3))
         b_left = A[k].shape[0] ; b_right = A[k].shape[2]
         u, sch, vh = LA.svd(A[k].reshape(b_left*d, b_right), full_matrices = False)
         A[k] = u.reshape(b_left, d, b_right)
         b_lefts = A[k+1].shape[0] ; b_rights = A[k+1].shape[2]
-        A[k+1] = np.diag(sch) @ vh @ (A[k+1].reshape(b_lefts, d*b_rights))
+        A[k+1] = np.diag(sch) @ vh @ (A[k+1].reshape(b_lefts, d*b_rights)) / LA.norm(sch)
         A[k+1] = A[k+1].reshape(b_lefts, d, b_rights)
         
         """
         Updates arrays L and R, for optimization of next node
+        is this the cause of error? 
         """
         t1 = np.tensordot(A[k], M, axes=((1),(2)))
         L[k+1] = np.tensordot(t1, np.conj(A[k]), axes=((4),(1)))
         R[k+1] = 0
+    #Right Sweep
     for k in range(Nsites-1, 0, -1):
-        #Right Sweep
-        """
-        Logic follows from left loop, though directions are switched
-        """
-        if k != Nsites-1:
-            RT = np.tensordot(R[Nsites-1], R[Nsites], axes=((1,3,5),(1,0,2)))
-            for y in range(Nsites-2, k, -1):
-                RT = np.tensordot(R[y], RT, axes=((1,3,5),(0,1,2)))
-        else:
-            RT = np.swapaxes(R[Nsites], 0,1)
-        LT = np.tensordot(L[0],L[1], axes = ((1,0,2),(0,2,4)))
-        for x in range(k-1):
-            LT = np.tensordot(LT, L[x+2], axes=((0,1,2),(0,2,4)))
-
-        h1 = np.tensordot(LT, M, axes=((1),(0)))
-        H = np.tensordot(h1, RT, axes=((2),(1)))
-
-        re_H = np.transpose(H, (1,3,5,0,2,4))
-        dim = re_H.shape[0]*re_H.shape[1]*re_H.shape[2]
-        Hmat = np.reshape(re_H, (dim,dim))
-        Psi = np.reshape(A[k], (dim,1))
-        upPsi = Lanzcos(Hmat, Psi, krydim, lanit)
-        A[k] = np.reshape(upPsi, (re_H.shape[0], re_H.shape[1], re_H.shape[2]))
+        H = contract(k,L,R)
+        upPsi, d1, d2, d3 = init__ex_lanzcos(H, A[k])
+        A[k] = np.reshape(upPsi, (d1, d2, d3))
         b_left = A[k].shape[0] ; b_right = A[k].shape[2]
         u, sch, vh = LA.svd(A[k].reshape(b_left,d*b_right), full_matrices = False)
         A[k] = vh.reshape(b_left, d, b_right)
         b_lefts = A[k-1].shape[0] ; b_rights = A[k-1].shape[2]
-        A[k-1] = (A[k-1].reshape(b_lefts*d, b_rights) @ u @ np.diag(sch))
+        A[k-1] = (A[k-1].reshape(b_lefts*d, b_rights) @ u @ np.diag(sch)) / LA.norm(sch)
         A[k-1] = A[k-1].reshape(b_lefts, d, b_rights)
         t1 = np.tensordot(A[k], M, axes=((1),(2)))
         R[k] = np.tensordot(t1, np.conj(A[k]), axes=((4),(1)))
         L[k+1] = 0
         
     #### Uncomment block below to get energy after each sweep    
-    """    
+    #"""    
     LS = np.tensordot(L[0],L[1], axes=((1,0,2),(0,2,4)))
     RS = np.tensordot(R[Nsites-1], R[Nsites], axes=((1,3,5),(1,0,2)))
     for y in range(Nsites-2, 0, -1):
         RS = np.tensordot(R[y], RS, axes=((1,3,5),(0,1,2)))
     E = float(np.tensordot(LS, RS, axes=((0,1,2),(0,1,2))))
     print(E)
-    """
+    #"""
 #%%
         
 """
