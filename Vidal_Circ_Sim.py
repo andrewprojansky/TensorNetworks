@@ -47,13 +47,15 @@ class Circuit:
         empty array of tensors, to be filled after initializing circuit
     """
     
-    def __init__(self, N=10, max_chi = 2**(10//2),
-                init_state = 'zero', c_center = 9):
+    def __init__(self, N=10, max_chi = None,
+                init_state = 'zero', c_center=None):
         self.N = N
-        self.max_chi = max_chi
+        if max_chi == None: max_chi = 2**(N//2)
+        else: self.max_chi = max_chi
         self.init_state = init_state
         self.Psi = [0 for x in range(N)]
-        self.c_center = c_center
+        if c_center==None: c_center = N-1
+        else: self.c_center = c_center
         
     def init_Circuit(self):
         """
@@ -201,7 +203,7 @@ class Circuit:
 Make GHZ State
 """
 N = 10
-circ = Circuit(N, max_chi = 2**(N//2), init_state='zero', c_center=N-1)
+circ = Circuit(N, init_state='zero')
 circ.init_Circuit()
 circ.sqgate(0, H)
 for j in np.arange(0,N-1,1):
@@ -214,7 +216,7 @@ not go over the maximum. And runs pretty efficiently, compared to the qiskit
 backend
 """
 N = 20
-circ2 = Circuit(N, max_chi = 2**(N//2), init_state='zero', c_center=N-1)
+circ2 = Circuit(N, init_state='zero')
 circ2.init_Circuit()
 for k in range(10):
     for j in np.arange(0,N-1,1):
