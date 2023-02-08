@@ -15,6 +15,7 @@ import random
 import matplotlib.pyplot as plt
 from tqdm import tqdm
 
+error_t = 10**(-8)
 H = 1/np.sqrt(2) * np.array([[1,1],[1,-1]])
 S = np.array([[1,0],[0,1j]])
 T = np.array([[1,0],[0,np.exp(1j*np.pi/4)]])
@@ -54,7 +55,7 @@ class Circuit:
         else: self.max_chi = max_chi
         self.init_state = init_state
         self.Psi = [0 for x in range(N)]
-        if c_center==None: c_center = N-1
+        if c_center==None: self.c_center = N-1
         else: self.c_center = c_center
         
     def init_Circuit(self):
@@ -98,6 +99,7 @@ class Circuit:
         d2p = self.Psi[site+1].shape[1]; d3p = self.Psi[site+1].shape[2]; 
         psi_m = self.Psi[site].reshape(d1*d2, d3)
         u, d, vh = LA.svd(psi_m)
+        d = self.trun_d(d)
         self.Psi[site] = u[:,np.arange(0,len(d),1)].reshape(d1,d2,d3)
         psi_mp = np.diag(d) @ vh @ self.Psi[site+1].reshape(d1p, d2p*d3p) / LA.norm(d)
         self.Psi[site+1] = psi_mp.reshape(d1p, d2p, d3p)
@@ -117,6 +119,7 @@ class Circuit:
         d2p = self.Psi[site-1].shape[1]; d3p = self.Psi[site-1].shape[2]; 
         psi_m = self.Psi[site].reshape(d1, d2* d3)
         u, d, vh = LA.svd(psi_m)
+        d = self.trun_d(d)
         self.Psi[site] = vh[np.arange(0,len(d),1),:].reshape(d1,d2,d3)
         psi_mp = (self.Psi[site-1].reshape(d1p*d2p, d3p) @ u @ np.diag(d)) / LA.norm(d)
         self.Psi[site+1] = psi_mp.reshape(d1p, d2p, d3p)
@@ -181,6 +184,7 @@ class Circuit:
         two_site = np.swapaxes(two_site, 1, 2)
         two_site = np.reshape(two_site, (two_site.shape[0]*2, 2*two_site.shape[2]))
         u, d, vh = LA.svd(two_site)
+        d = self.trun_d(d)
         u = u[:,np.arange(0,len(d),1)]
         self.Psi[control] = np.reshape(u, (left_one, 2, u.shape[1]))
         rmat = np.diag(d) @ vh[np.arange(0,len(d),1),:]
@@ -197,6 +201,29 @@ class Circuit:
             self.right_canonize(i)
         ### Normalize center tensor
         self.Psi[self.c_center] = self.Psi[self.c_center]/LA.norm(self.Psi[self.c_center])
+        
+    def trun_d(self, d):
+        """
+        Truncates singular values based on error threshold 
+        ... need to implement max_chi truncation as well
+
+        Parameters
+        ----------
+        d : array
+            array of non truncated singular values
+
+        Returns
+        -------
+        d : array
+            Dtruncated vector of singular values
+
+        """
+        
+        for i in range(len(d)-1,-1,-1):
+            if d[i] > error_t:
+                d = d[:i+1]
+                break
+        return d
         
 #%%
 """
@@ -225,4 +252,58 @@ for k in range(10):
         circ2.twoqgate(j, CNOT)
         circ2.sqgate(j, H)
         circ2.sqgate(j, X)
+#%%
+"""
+Testing Random Clifford Circuits; do statistics match statistics from qiskit
+backend? 
+"""
+repeats=20
+
+def run_circ(p_cnot,N):
+    h_c = 0; s_c = 0; cnot_c = 0; p_single =  1-p_cnot
+    # Construct quantum circuit
+    circclif = Circuit(N, init_state='zero')
+    circclif.init_Circuit()
+    
+    #layers = N**2
+    layers= N**2
+    for j in range(layers):
+        i_banned = []
+        for i in range(N):
+            two_q = random.random()
+            if two_q < p_cnot and i < N-1 and i not in i_banned:
+                circclif.twoqgate(i, CNOT); i_banned.append(i+1) ; cnot_c += 1
+            elif two_q < p_cnot + p_single/2  and i not in i_banned:
+                circclif.sqgate(i,H); h_c+= 1
+            elif two_q > p_cnot + p_single/2 and i not in i_banned:
+                circclif.sqgate(i, S); s_c += 1
+                
+    m_l = 0
+    for t in circclif.Psi:
+        if t.shape[0]  > m_l:
+            m_l = t.shape[0]
+    
+    return cnot_c, m_l
+
+avg_bond = []
+avg_cnot_c = []
+perc_l = []
+ent_l = []
+for j in tqdm(np.arange(0,100,1)):
+    p_cnot = 0.01*j
+    avg_cnot = 0 ; avg_max_b = 0
+    for i in range(repeats):
+        cnot_c, m_l = run_circ(p_cnot,10)
+        avg_cnot += cnot_c ; avg_max_b += m_l
+    avg_cnot = np.round(avg_cnot/repeats) ; avg_max_b = avg_max_b/repeats
+    avg_bond.append(avg_max_b) ; avg_cnot_c.append(avg_cnot)
+    perc_l.append(p_cnot)
+    
+plt.plot(perc_l, avg_bond)
+plt.xlabel('Percentage for random CHP gate to be CNOT')
+plt.ylabel('Avg bond dimension')
+plt.suptitle('% CNOT v Avg bond dim (100 trials per %)', fontsize=14)
+plt.title('Random Initial Two Qubit Product State', fontsize=10)
+plt.show()
+
    
