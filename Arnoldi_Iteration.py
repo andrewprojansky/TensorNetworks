@@ -177,31 +177,35 @@ def IRA(mat, qinit, k, q, H, p, tao, sort_crit):
         set of eigenvectors
 
     """
-    
+
     Qin, Hin = Arnoldi_Base(mat, qinit, k, q, H)
     qinit = Qin[k] ; Q = Qin[:k]; H = Hin[:k, :k]
     eigs, evecs = np.linalg.eig(H)
-    x = Q @ evecs.T; 
+    x = evecs.T @ np.array(Q); 
     check = tol_check(mat, x, eigs, tao, k)
-    if check:
+    #adjust check to do 5 iterations
+    check = 0
+    while check != 10:
         #shift this block down when not testing stuff... 
         H = np.pad(H, [(0,p+1),(0,p+1)], mode='constant', constant_values=0)
         k=k+p; Qup, Hup = Arnoldi_Base(mat, qinit, k, Q, H)
         qinit = Qup[k] ; Q = Qup[:k]; H = Hup[:k, :k]
         new_eigs, unew = np.linalg.eig(H)
         shifts = sort_eigs(sort_crit, new_eigs, k, p)
+        print(shifts)
         e_kpp = np.zeros(k); e_kpp[k-1] = 1; 
         for s in shifts:
             Qr, qR = np.linalg.qr(H - s * np.identity(k))
             H = ct(Qr) @ H @ Qr
-            Q = Q @ Qr
+            Q = (np.array(Q).T @ Qr).T
             e_kpp = ct(e_kpp) @ Qr
         k = k-p
-        qinit = Q[:,k] * H[k, k-1] + qinit * e_kpp[k-1]
-        Q = Q[:,:k]; H = H[:k,:k]
+        qinit = Q.T[:,k] * H[k+1, k] + qinit * e_kpp[k]
+        Q = Q[:k]; H = H[:k,:k]
         eigs, evecs = np.linalg.eig(H)
-        x = Q @ evecs.T; 
-        check = tol_check(mat, x, eigs, tao, k)
+        x =  evecs.T @ Q; Q = list(Q)
+        #check = tol_check(mat, x, eigs, tao, k)
+        check = check + 1
     return eigs, x
         
         
@@ -254,5 +258,27 @@ plt.plot(np.real(ex_eigs), np.imag(ex_eigs), 'x')
 plt.plot(np.real(ap_eigs), np.imag(ap_eigs), 'o', alpha=0.6)
 plt.plot(np.real(new_eigs), np.imag(new_eigs), 's', alpha=0.2)
 plt.show()
+#%%
+#Implicitly Restarted Arnoldi
+tao = 0.01
+dim = 20; k = 5; p = 5
+mat = np.random.rand(dim,dim) - np.random.rand(dim,dim)
+ex_eigs, u = np.linalg.eig(mat)
+x = np.random.rand(dim)
+qinit = x/LA.norm(x)
+q = [] ; H = np.zeros((k+1,k), dtype='complex')
+#Right now, no updates are happening... maybe a sorting issue? Need to look 
+#into... just doing base arnoldi, something isn't being updated
+eigs, xvs = IRA(mat, qinit, k, q, H, p, tao, 'Max Real')
 
 
+plt.plot(np.real(ex_eigs), np.imag(ex_eigs), 'x')
+plt.plot(np.real(eigs), np.imag(eigs), 'o', alpha=0.6)
+plt.show()
+#%%
+qr, Hr = Arnoldi_Base(mat, qinit, k, q, H)
+qinit = qr[k] ; Q = qr[:k]; H = H[:k, :k]
+ap_eigs, uprime = np.linalg.eig(H)
+plt.plot(np.real(ex_eigs), np.imag(ex_eigs), 'x')
+plt.plot(np.real(ap_eigs), np.imag(ap_eigs), 'o', alpha=0.6)
+plt.show()
