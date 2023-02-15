@@ -185,7 +185,7 @@ def IRA(mat, qinit, k, q, H, p, tao, sort_crit):
     check = tol_check(mat, x, eigs, tao, k)
     #adjust check to do 5 iterations
     check = 0
-    while check != 10:
+    while check != 12:
         #shift this block down when not testing stuff... 
         H = np.pad(H, [(0,p+1),(0,p+1)], mode='constant', constant_values=0)
         k=k+p; q, H = Arnoldi_Base(mat, qinit, k, q, H)
@@ -278,12 +278,12 @@ plt.show()
 #%%
 #Implicitly Restarted Arnoldi - THIS IS AWESOME
 tao = 0.01
-d = 10; k = 3; p = 3
+d = 50; k = 3; p = 5
 mat = np.random.rand(d,d)+ 1j * (np.random.rand(d,d))
 mat = mat - (np.random.rand(d,d)+ 1j * (np.random.rand(d,d)))
-mat = mat + ct(mat)
+#mat = mat + ct(mat)
 ex_eigs, u = np.linalg.eig(mat)
-x = np.random.rand(d)
+x = np.random.rand(d) + 1j * np.random.rand(d)
 qinit = x/LA.norm(x)
 q = [] ; H = np.zeros((k+1,k), dtype='complex')
 eigs, xvs = IRA(mat, qinit, k, q, H, p, tao, 'Min Real')
@@ -293,8 +293,8 @@ q = [] ; H = np.zeros((k+1,k), dtype='complex')
 q, H = Arnoldi_Base(mat, qinit, k, q, H)
 ei, um = np.linalg.eig(H[:k,:k])
 
-plt.plot([0]*d, np.real(ex_eigs), 'x')
-plt.plot([1]*k, np.real(ei), 'o')
-plt.plot([2]*k, np.real(eigs), 'o')
+plt.plot(np.real(ex_eigs), np.imag(ex_eigs), 'x')
+plt.plot(np.real(ei), np.imag(ei), 'o', alpha=0.6)
+plt.plot(np.real(eigs), np.imag(eigs), 's', alpha=0.4)
 
 plt.show()
