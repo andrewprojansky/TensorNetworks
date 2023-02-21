@@ -5,7 +5,6 @@ Vidal_Circ_Sim.py
 ---------------------------------------------------------------------
 Simulating quantum circuits using tensor networks, following methods
 outlines in Vidal [2003]. 
-
     by Andrew Projansky - last modified February 1st
 """
 
@@ -14,6 +13,7 @@ from numpy import linalg as LA
 import random
 import matplotlib.pyplot as plt
 from tqdm import tqdm
+from scipy.stats import unitary_group
 
 error_t = 10**(-8)
 H = 1/np.sqrt(2) * np.array([[1,1],[1,-1]])
@@ -23,7 +23,7 @@ X = np.array([[0,1],[1,0]])
 Y = np.array([[0,-1j],[1j,0]])
 Z = np.array([[1,0],[0,-1]])
 CNOT = np.array([[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]])
-
+#%%
 class Circuit:
     """
     Class for circuits composed of matrix product operators acting on 
@@ -305,5 +305,81 @@ plt.ylabel('Avg bond dimension')
 plt.suptitle('% CNOT v Avg bond dim (100 trials per %)', fontsize=14)
 plt.title('Random Initial Two Qubit Product State', fontsize=10)
 plt.show()
+#%%
+"""
+Do the above with Match Gates
+"""
+def make_sim(dim, simmean, simwidth):
+    
+    RR = np.random.normal(simmean, simwidth, (dim,dim))
+    SM = RR + 1j * np.random.normal(simmean, simwidth, (dim,dim))
+    return SM
 
-   
+def make_unitary(dim, sim):
+    Q, R = np.linalg.qr(sim)
+    Etta = np.zeros((dim,dim))
+    for j in range(dim):
+        Etta[j,j] = R[j,j]/LA.norm(R[j,j])
+    U = Q @ Etta
+    return U
+
+def rand_match():
+    sim1 = make_sim(2, 0, 1); u1 = make_unitary(2, sim1)
+    sim2 = make_sim(2, 0, 1); u2 = make_unitary(2, sim2)
+    match = np.zeros((4,4) , dtype='complex')
+    for j in range(2):
+        for k in range(2):
+            match[3*j,3*k] = u1[j,k]
+            match[j+1, k+1] = u2[j,k]
+            
+    return match
+#%%
+repeats=20
+
+def run_circ(p_match,N):
+    # Construct quantum circuit
+    n_match=0
+    circmatch = Circuit(N, init_state='zero')
+    circmatch.init_Circuit()
+    
+    #layers = N**2
+    layers= N**2
+    for j in range(layers):
+        i_banned = []
+        for i in range(N):
+            two_q = random.random()
+            if two_q < p_match and i < N-1 and i not in i_banned:
+                circmatch.twoqgate(i, rand_match()); i_banned.append(i+1)
+                n_match = n_match+1
+            elif two_q > p_match and i not in i_banned:
+                sim1 = make_sim(2, 0, 1); u1 = make_unitary(2, sim1)
+                circmatch.sqgate(i, u1)
+                
+                
+    m_l = 0
+    for t in circmatch.Psi:
+        if t.shape[0]  > m_l:
+            m_l = t.shape[0]
+    
+    return n_match, m_l
+
+avg_bond = []
+avg_match = []
+perc_l = []
+ent_l = []
+for j in tqdm(np.arange(0,80,1)):
+    p_match = 0.01*j
+    avg_m = 0 ; avg_max_b = 0
+    for i in range(repeats):
+        m_c, m_l = run_circ(p_match,10)
+        avg_m += m_c ; avg_max_b += m_l
+    avg_cnot = np.round(avg_m/repeats) ; avg_max_b = avg_max_b/repeats
+    avg_bond.append(avg_max_b) ; avg_match.append(avg_m)
+    perc_l.append(p_match)
+    
+plt.plot(perc_l, avg_bond)
+plt.xlabel('Percentage for random gate to be match gate')
+plt.ylabel('Avg bond dimension')
+plt.suptitle('% Match v Avg bond dim (100 trials per %)', fontsize=14)
+plt.title('From Zero State', fontsize=10)
+plt.show()
