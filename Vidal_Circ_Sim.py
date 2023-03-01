@@ -6,6 +6,15 @@ Vidal_Circ_Sim.py
 Simulating quantum circuits using tensor networks, following methods
 outlines in Vidal [2003]. 
 
+Goal is to look at how information spreads in circuits of different classes, 
+and how bond dimension grows as a circuit goes from being filled with the 
+identity to being filled with brickwork architecture
+
+TO-DO
+    RUN CIRCUIT
+    INCLUDE MY VISUALIZATIONS
+    Generate random cliffords... qiskit? via tableau? lets see... 
+
     by Andrew Projansky - last modified February 1st
 """
 
@@ -14,7 +23,9 @@ from numpy import linalg as LA
 import random
 import matplotlib.pyplot as plt
 from tqdm import tqdm
-
+from quimb import ptr
+import PlottingTNs
+#%%
 error_t = 10**(-8)
 H = 1/np.sqrt(2) * np.array([[1,1],[1,-1]])
 S = np.array([[1,0],[0,1j]])
@@ -23,6 +34,10 @@ X = np.array([[0,1],[1,0]])
 Y = np.array([[0,-1j],[1j,0]])
 Z = np.array([[1,0],[0,-1]])
 CNOT = np.array([[1,0,0,0],[0,1,0,0],[0,0,0,1],[0,0,1,0]])
+
+def cc(mat):
+    
+    return np.conj(mat).T
 
 class Circuit:
     """
@@ -224,7 +239,295 @@ class Circuit:
                 d = d[:i+1]
                 break
         return d
+#%%
+def make_sim(dim, simmean, simwidth):
+    """
+    Makes randomly matrix in GL(N, C). This matrix can be assumed to be 
+    invertible because the measure of non-invertible matrices when 
+    randomly selecting from C(N) is zero
+
+    Parameters
+    ----------
+    dim : int
+        dimension of matrix
+    simmean : int
+        mean of distribution random complex variables are chosen from
+    simwidth : int
+        width of distribution random complex variables are chosen from
+
+    Returns
+    -------
+    SM : array
+        matrix in GL(N, C)
+
+    """
+    
+    RR = np.random.normal(simmean, simwidth, (dim,dim))
+    SM = RR + 1j * np.random.normal(simmean, simwidth, (dim,dim))
+    return SM
+
+def make_unitary(dim, simmean, simwidth):
+    """
+    Generates unitary matrix via QR decomposition of matrix in GL(N, C)
+    See parameters above
+
+    Returns
+    -------
+    U : array
+        unitary array
+
+    """
+    sim = make_sim(dim, simmean, simwidth)
+    Q, R = np.linalg.qr(sim)
+    Etta = np.zeros((dim,dim))
+    for j in range(dim):
+        Etta[j,j] = R[j,j]/LA.norm(R[j,j])
+    U = Q @ Etta
+    return U
+
+def dephase(unitary):
+    """
+    Dephases unitary, turns it from U(N) to SU(N)
+
+    Parameters
+    ----------
+    unitary : array
+        input matrix in U(N)
+
+    Returns
+    -------
+    unitary : array
+        depahsed matrix in SU(N)
+
+    """
+    
+    glob = np.linalg.det(unitary)
+    theta = np.arctan(np.imag(glob) / np.real(glob)) / 2
+    unitary = unitary * np.exp(-1j*theta)
+    return unitary
+
+#%%
+class Experiment:
+    
+    def __init__(self, gates, repeats, probs, data_type, layers,
+                 N, max_chi = None, in_state = 'zero', c_center=None):
+        """
+        Class object for initializing an experiment where over a 
+        certain brickwork gate set, with bricks being non-identity only
+        with a certain probability, circuits are run with callable 
+        stats
+
+        Parameters
+        ----------
+        gates : string
+            set of gates. Clifford, Haar, or Match
+        repeats : int
+            number of experiments data will be averaged over
+        probs : float
+            probability in [0,1] for gates in brickwork to be non-identity or 
+            not
+        data_type : dict
+            dictionary of types of data to be recorded
+        layers : int
+            layers in brickwork
+        N : int
+            Dsize of space
+        max_chi : int, optional
+            maximum size of bonds in TN circuit. The default is None.
+        in_state : string, optional
+            Initial MPS state. The default is 'zero'.
+        c_center : int, optional
+            site of canonization. The default is None.
+            
+        Attributes
+        ----------
+        bricks:  list
+            list of brickwork pairs
+        circ : Circuit
+            circuit object in experiment
+        data : array
+            array of data values recoreded at each layer
+        no_id : array
+            list of non identity gates, for plotting
+        id_list : array
+            list of identity gates, for plotting
+
+        """
         
+        self.gates = gates
+        self.repeats = repeats
+        self.probs = probs
+        self.data_type = data_type
+        self.layers = layers
+        self.N = N
+        self.max_chi = max_chi
+        self.in_state = in_state
+        self.c_center = c_center
+        self.bricks = self.make_bricks()
+        self.circ = None
+        self.data = np.zeros((len(data_type.keys()), layers))
+        self.not_id = [[] for j in range(self.layers)]
+        self.id_list = [[] for j in range(self.layers)]
+        
+        
+    def make_bricks(self):
+        """
+        Makes brickwork pairs based on number of sites
+
+        Returns
+        -------
+        layers : list
+            list of pairs for brickwork
+
+        """
+        
+        layers = [[],[]]
+        for j in range(self.N//2):
+            layers[0].append([2*j,2*j+1])
+        for j in range((self.N-1)//2):
+            layers[1].append([2*j + 1, 2*j+2])
+        return layers
+    
+    def renyi(self, rho_red, alpha):
+        """
+        alpha renyi entropy, with special consideration taken for when 
+        alpha is 1 (Von Neumann Entropy)
+
+        Parameters
+        ----------
+        rho_red : array
+            reduced density matrix for entropy to be taken over
+        alpha : int
+            order of entropy
+
+        Returns
+        -------
+        S : float
+            renyi entropy of order alpha
+
+        """
+        d, u = np.linalg.eig(rho_red); S = 0; d = d[d != 0]
+        if alpha == 1:
+            for eig in d:
+                S += -1*eig*np.log2(eig)
+        else:
+            S = 1/(1-alpha) * np.log2(sum(d**(alpha)))
+        return S
+        
+    def gate_funct(self):
+        """
+        Returns gate of desired gate set
+
+        Returns
+        -------
+        gate : array
+            two qubit gate to be applied
+
+        """
+        
+        if self.gates == 'Haar':
+            gate = make_unitary(4, 0, 1)
+        if self.gates == 'Match':
+            u1 = make_unitary(2, 0, 1); u2 = make_unitary(2, 0, 1)
+            u1 = dephase(u1); u2 = dephase(u2)
+            gate = np.zeros((4,4))
+            for i in range(2):
+                for j in range(2):
+                    gate[2*i, 2*j] = u1[i,j]
+                    gate[i+1, j+1] = u2[i,j]
+        if self.gates == 'Clifford':
+            #make clifford
+            #qiskit? Brayvi paper? 
+            pass
+        return gate
+    
+    def get_data(self, layer):
+        """
+        Generates data at each layer
+
+        Parameters
+        ----------
+        layer : int
+            Dcurrent layer circuit is on
+
+        """
+        ind = 0
+        for key in self.data_type.keys():
+            if 'bond_dim' == key:
+                m = 0
+                for t in self.circ.Psi:
+                    if t.shape[0] > m:
+                        m = t.shape[0]
+                self.data[ind, layer] += m
+                ind = ind + 1
+            if 'vn' == key:
+                final_A = self.data_type['vn']
+                rho = np.outer(np.conj(self.circ.contract_to_dense()), 
+                               self.circ.contract_to_dense())
+                rho_red = ptr(rho, [2]*self.N, np.arange(1, final_A, 1))
+                self.data[ind, layer] += self.renyi(rho_red, 1)
+                ind = ind + 1
+            if 'renyi' == key:
+                alpha = self.data_type['renyi'][0]
+                final_A = self.data_type['renyi'][1]
+                rho_red = ptr(self.rho, [2]*self.N, np.arange(1, final_A, 1))
+                self.data[ind, layer] += self.renyi(rho_red, alpha)
+                ind = ind + 1
+            
+    def run_experiment(self):
+        """
+        Runs experiment, over a number of repeats generates circuit and 
+        applies gates, taking statistics of system during process
+
+
+        """
+        
+        for i in range(self.repeats):
+            self.circ = Circuit(self.N, self.max_chi,
+                                       self.in_state, self.c_center)
+            self.circ.init_Circuit()
+            for j in range(self.layers):
+                for pairs in self.bricks[j%2]:
+                    if self.probs > np.random.rand():
+                        gate = self.gate_funct()
+                        self.circ.twoqgate(pairs[0], gate)
+                        self.not_id[j].append(pairs)
+                    else:
+                        self.id_list[j].append(pairs)
+                self.get_data(j)
+        self.data = self.data/self.repeats
+
+    def rand_CLifford(self, n):
+    
+        clif_list = []
+        '''Thanks Ewout van den Berg'''
+        for j in range(n):
+            tab = np.zeros((2,2*(n-j)))
+            tab[0] = np.random.randint(0,2,2*(n-j))
+            tab[1] = np.random.randint(0,2,2*(n-j))
+            while sum((tab[0] + tab[1])%2) % 2 == 0:
+                tab[1] = np.random.randint(0,2,2*(n-j))
+            #step 1
+            for k in range((n-j)):
+                if tab[0][k+(n-j)] == 1:
+                    if tab[0][k] == 0:
+                        sav = tab[:k]
+                        tab[:k] = tab[:k+n-j]
+                        tab[:k+n-j] = sav
+                        clif_list.append(('H', n-j))
+                    else:
+                        tab[:k+n-j] = (tab[:k+n-j] + tab[:k])%2
+                        clif_list.append(('S', n-j))
+            #step 2
+            
+            #step 3
+            
+            #step 4
+            
+            #step 5
+            
+        pass
+
 #%%
 """
 Make GHZ State
@@ -252,58 +555,21 @@ for k in range(10):
         circ2.twoqgate(j, CNOT)
         circ2.sqgate(j, H)
         circ2.sqgate(j, X)
+        
 #%%
-"""
-Testing Random Clifford Circuits; do statistics match statistics from qiskit
-backend? 
-"""
-repeats=20
+#This works! woah! - full experiment
+N = 10
+layers = N
+exp1 = Experiment('Haar', 1, 0.5, {'bond_dim': 0, 'vn': N//2}, layers,
+                  N, in_state = 'rand_loc')
+exp1.run_experiment()
 
-def run_circ(p_cnot,N):
-    h_c = 0; s_c = 0; cnot_c = 0; p_single =  1-p_cnot
-    # Construct quantum circuit
-    circclif = Circuit(N, init_state='zero')
-    circclif.init_Circuit()
-    
-    #layers = N**2
-    layers= N**2
-    for j in range(layers):
-        i_banned = []
-        for i in range(N):
-            two_q = random.random()
-            if two_q < p_cnot and i < N-1 and i not in i_banned:
-                circclif.twoqgate(i, CNOT); i_banned.append(i+1) ; cnot_c += 1
-            elif two_q < p_cnot + p_single/2  and i not in i_banned:
-                circclif.sqgate(i,H); h_c+= 1
-            elif two_q > p_cnot + p_single/2 and i not in i_banned:
-                circclif.sqgate(i, S); s_c += 1
-                
-    m_l = 0
-    for t in circclif.Psi:
-        if t.shape[0]  > m_l:
-            m_l = t.shape[0]
-    
-    return cnot_c, m_l
-
-avg_bond = []
-avg_cnot_c = []
-perc_l = []
-ent_l = []
-for j in tqdm(np.arange(0,100,1)):
-    p_cnot = 0.01*j
-    avg_cnot = 0 ; avg_max_b = 0
-    for i in range(repeats):
-        cnot_c, m_l = run_circ(p_cnot,10)
-        avg_cnot += cnot_c ; avg_max_b += m_l
-    avg_cnot = np.round(avg_cnot/repeats) ; avg_max_b = avg_max_b/repeats
-    avg_bond.append(avg_max_b) ; avg_cnot_c.append(avg_cnot)
-    perc_l.append(p_cnot)
-    
-plt.plot(perc_l, avg_bond)
-plt.xlabel('Percentage for random CHP gate to be CNOT')
-plt.ylabel('Avg bond dimension')
-plt.suptitle('% CNOT v Avg bond dim (100 trials per %)', fontsize=14)
-plt.title('Random Initial Two Qubit Product State', fontsize=10)
+fig, ax = plt.subplots(1)
+PlottingTNs.vlines(N, ax, lays = layers)
+PlottingTNs.sitecirc(N, ax, fc = 'firebrick')
+PlottingTNs.gatecirc(ax, exp1.not_id)
+PlottingTNs.gatecirc(ax, exp1.id_list, fc = 'white')
+ax.set_aspect('equal', adjustable='box')
+ax.plot(N,layers)
+ax.axis('off')
 plt.show()
-
-   

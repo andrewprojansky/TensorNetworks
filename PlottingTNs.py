@@ -47,7 +47,7 @@ def sitecirc(sites, ax, l=1, fc='indianred'):
 
     """
     scirc = [Circle((j,l), 0.25) for j in np.arange(1,sites+1, 1)]
-    pcirc = PatchCollection(scirc, facecolor=fc, alpha=0.9)
+    pcirc = PatchCollection(scirc, facecolor=fc, alpha=0.9, edgecolor='darkred')
     ax.add_collection(pcirc)
     
 def vlines(sites, ax, lc = 'black', lays = layers):
@@ -123,17 +123,18 @@ def meascirc(ax, meas_l, layer_l = np.arange(0, sites, 1),
     for l in layer_l:
         for m in meas_l[l]:
             ax.plot(m+1, l+2.425, 'x', color='red', markersize=8)
-
+'''
 fig, ax = plt.subplots(1)
 vlines(sites, ax, lays=len(gate_l) + 2)
-sitecirc(sites, ax)
+sitecirc(sites, ax, fc = 'firebrick')
 gatecirc(ax, gate_l)
 meascirc(ax, meas_l)
 ###
 #If doing an inner product...
-sitecirc(sites, ax, l = len(gate_l)+2)
+#sitecirc(sites, ax, l = len(gate_l)+2)
 ###
 ax.set_aspect('equal', adjustable='box')
 ax.plot(sites,layers)
 ax.axis('off')
 plt.show()
+'''
