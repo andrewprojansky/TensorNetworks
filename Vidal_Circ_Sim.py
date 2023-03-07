@@ -11,8 +11,6 @@ and how bond dimension grows as a circuit goes from being filled with the
 identity to being filled with brickwork architecture
 
 TO-DO
-    RUN CIRCUIT
-    INCLUDE MY VISUALIZATIONS
     Generate random cliffords... qiskit? via tableau? lets see... 
 
     by Andrew Projansky - last modified February 1st
@@ -22,9 +20,11 @@ import numpy as np
 from numpy import linalg as LA
 import random
 import matplotlib.pyplot as plt
-from tqdm import tqdm
+import qiskit
 from quimb import ptr
-import PlottingTNs
+from tqdm import tqdm
+import time 
+#import PlottingTNs
 #%%
 error_t = 10**(-8)
 H = 1/np.sqrt(2) * np.array([[1,1],[1,-1]])
@@ -304,6 +304,8 @@ def dephase(unitary):
     glob = np.linalg.det(unitary)
     theta = np.arctan(np.imag(glob) / np.real(glob)) / 2
     unitary = unitary * np.exp(-1j*theta)
+    if np.round(np.linalg.det(unitary)) < 0:
+        unitary = unitary * 1j
     return unitary
 
 #%%
@@ -430,15 +432,13 @@ class Experiment:
         if self.gates == 'Match':
             u1 = make_unitary(2, 0, 1); u2 = make_unitary(2, 0, 1)
             u1 = dephase(u1); u2 = dephase(u2)
-            gate = np.zeros((4,4))
+            gate = np.zeros((4,4), dtype='complex')
             for i in range(2):
                 for j in range(2):
-                    gate[2*i, 2*j] = u1[i,j]
+                    gate[3*i, 3*j] = u1[i,j]
                     gate[i+1, j+1] = u2[i,j]
         if self.gates == 'Clifford':
-            #make clifford
-            #qiskit? Brayvi paper? 
-            pass
+            gate = qiskit.quantum_info.random_clifford(2)
         return gate
     
     def get_data(self, layer):
@@ -470,7 +470,9 @@ class Experiment:
             if 'renyi' == key:
                 alpha = self.data_type['renyi'][0]
                 final_A = self.data_type['renyi'][1]
-                rho_red = ptr(self.rho, [2]*self.N, np.arange(1, final_A, 1))
+                rho = np.outer(np.conj(self.circ.contract_to_dense()), 
+                                self.circ.contract_to_dense())
+                rho_red = ptr(rho, [2]*self.N, np.arange(1, final_A, 1))
                 self.data[ind, layer] += self.renyi(rho_red, alpha)
                 ind = ind + 1
             
@@ -482,7 +484,7 @@ class Experiment:
 
         """
         
-        for i in range(self.repeats):
+        for i in tqdm(range(self.repeats)):
             self.circ = Circuit(self.N, self.max_chi,
                                        self.in_state, self.c_center)
             self.circ.init_Circuit()
@@ -497,79 +499,258 @@ class Experiment:
                 self.get_data(j)
         self.data = self.data/self.repeats
 
-    def rand_CLifford(self, n):
-    
-        clif_list = []
-        '''Thanks Ewout van den Berg'''
-        for j in range(n):
-            tab = np.zeros((2,2*(n-j)))
-            tab[0] = np.random.randint(0,2,2*(n-j))
-            tab[1] = np.random.randint(0,2,2*(n-j))
-            while sum((tab[0] + tab[1])%2) % 2 == 0:
-                tab[1] = np.random.randint(0,2,2*(n-j))
-            #step 1
-            for k in range((n-j)):
-                if tab[0][k+(n-j)] == 1:
-                    if tab[0][k] == 0:
-                        sav = tab[:k]
-                        tab[:k] = tab[:k+n-j]
-                        tab[:k+n-j] = sav
-                        clif_list.append(('H', n-j))
-                    else:
-                        tab[:k+n-j] = (tab[:k+n-j] + tab[:k])%2
-                        clif_list.append(('S', n-j))
-            #step 2
-            
-            #step 3
-            
-            #step 4
-            
-            #step 5
-            
-        pass
-
 #%%
 """
 Make GHZ State
 """
-N = 10
+N = 1000
 circ = Circuit(N, init_state='zero')
 circ.init_Circuit()
 circ.sqgate(0, H)
+st = time.time()
 for j in np.arange(0,N-1,1):
     circ.twoqgate(j, CNOT)
-c_tensor = circ.contract_to_dense()
+print(time.time()-st)
+#c_tensor = circ.contract_to_dense()
 #%%
 """
-Make state to test bond dim of everything... and it does. bond dimension does 
-not go over the maximum. And runs pretty efficiently, compared to the qiskit
-backend
+Experiment from |000...00> state
 """
-N = 20
-circ2 = Circuit(N, init_state='zero')
-circ2.init_Circuit()
-for k in range(10):
-    for j in np.arange(0,N-1,1):
-        circ2.sqgate(j, H)
-        circ2.sqgate(j,T)
-        circ2.twoqgate(j, CNOT)
-        circ2.sqgate(j, H)
-        circ2.sqgate(j, X)
-        
-#%%
-#This works! woah! - full experiment
-N = 10
-layers = N
-exp1 = Experiment('Haar', 1, 0.5, {'bond_dim': 0, 'vn': N//2}, layers,
-                  N, in_state = 'rand_loc')
-exp1.run_experiment()
+N = 10; layers = 100; repeats = 200
+p_l = [0.05, 0.15, 0.3, 0.5, 0.85]
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('Haar: log2 bond_dim')
+ax2.set_title('Haar: von neumann')
+ax3.set_title('Haar: second renyi')
+for p in p_l:
+    exp1 = Experiment('Haar', repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'zero')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=str(p))
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)])
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)])
+ax1.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
 
-fig, ax = plt.subplots(1)
-PlottingTNs.vlines(N, ax, lays = layers)
-PlottingTNs.sitecirc(N, ax, fc = 'firebrick')
-PlottingTNs.gatecirc(ax, exp1.not_id)
-PlottingTNs.gatecirc(ax, exp1.id_list, fc = 'white')
-ax.set_aspect('equal', adjustable='box')
-ax.plot(N,layers)
-ax.axis('off')
-plt.show()
+N = 10; layers = 100; repeats = 200
+p_l = [0.05, 0.15, 0.3, 0.5, 0.85]
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('Match: log2 bond_dim')
+ax2.set_title('Match: von neumann')
+ax3.set_title('Match: second renyi')
+for p in p_l:
+    exp1 = Experiment('Match', repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'zero')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=str(p))
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)])
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)])
+ax1.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+
+N = 10; layers = 100; repeats = 200
+p_l = [0.05, 0.15, 0.3, 0.5, 0.85]
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('Clifford: log2 bond_dim')
+ax2.set_title('Clifford: von neumann')
+ax3.set_title('Clifford: second renyi')
+for p in p_l:
+    exp1 = Experiment('Clifford', repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'zero')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=str(p))
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)])
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)])
+ax1.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+#%%
+#%%
+"""
+Experiment from random single qubit product state
+"""
+N = 10; layers = 100; repeats = 200
+p_l = [0.05, 0.15, 0.3, 0.5, 0.85]
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('Haar: log2 bond_dim')
+ax2.set_title('Haar: von neumann')
+ax3.set_title('Haar: second renyi')
+for p in p_l:
+    exp1 = Experiment('Haar', repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'rand_loc')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=str(p))
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)])
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)])
+ax1.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+
+N = 10; layers = 100; repeats = 200
+p_l = [0.05, 0.15, 0.3, 0.5, 0.85]
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('Match: log2 bond_dim')
+ax2.set_title('Match: von neumann')
+ax3.set_title('Match: second renyi')
+for p in p_l:
+    exp1 = Experiment('Match', repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'rand_loc')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=str(p))
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)])
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)])
+ax1.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+
+N = 10; layers = 100; repeats = 200
+p_l = [0.05, 0.15, 0.3, 0.5, 0.85]
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('Clifford: log2 bond_dim')
+ax2.set_title('Clifford: von neumann')
+ax3.set_title('Clifford: second renyi')
+for p in p_l:
+    exp1 = Experiment('Clifford', repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'rand_loc')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=str(p))
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)])
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)])
+ax1.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+#%%
+'''
+Experiment - high probability, data overlayed for each family, 
+rand_product start
+'''
+g_type = ['Haar', 'Match', 'Clifford']; p = 0.85
+N = 10; layers = 100; repeats = 200
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('log2 bond_dim: p = 0.85')
+ax2.set_title('von neumann: p = 0.85')
+ax3.set_title('second renyi: p = 0.85')
+for g_t in g_type:
+    exp1 = Experiment(g_t, repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'rand_loc')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=g_t)
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)], label=g_t)
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)], label=g_t)
+ax1.legend(loc="lower right")
+ax2.legend(loc="lower right")
+ax3.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+
+'''
+Experiment - low probability, data overlayed for each family,
+rand_product start
+'''
+g_type = ['Haar', 'Match', 'Clifford']; p = 0.1
+N = 10; layers = 200; repeats = 200
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('log2 bond_dim: p = 0.1')
+ax2.set_title('von neumann: p = 0.1')
+ax3.set_title('second renyi: p = 0.1')
+for g_t in g_type:
+    exp1 = Experiment(g_t, repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'rand_loc')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=g_t)
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)], label=g_t)
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)], label=g_t)
+ax1.legend(loc="lower right")
+ax1.legend(loc="lower right")
+ax2.legend(loc="lower right")
+ax3.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+#%%
+#%%
+'''
+Experiment - high probability, data overlayed for each family, 
+zero state start
+'''
+g_type = ['Haar', 'Match', 'Clifford']; p = 0.85
+N = 10; layers = 100; repeats = 200
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('log2 bond_dim: p = 0.85')
+ax2.set_title('von neumann: p = 0.85')
+ax3.set_title('second renyi: p = 0.85')
+for g_t in g_type:
+    exp1 = Experiment(g_t, repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'zero')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=g_t)
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)], label=g_t)
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)], label=g_t)
+ax1.legend(loc="lower right")
+ax2.legend(loc="lower right")
+ax3.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+
+'''
+Experiment - low probability, data overlayed for each family,
+rand_product start
+'''
+g_type = ['Haar', 'Match', 'Clifford']; p = 0.1
+N = 10; layers = 200; repeats = 200
+fig1, (ax1) = plt.subplots(1,1)
+fig2, (ax2) = plt.subplots(1,1)
+fig3, (ax3) = plt.subplots(1,1)
+ax1.set_title('log2 bond_dim: p = 0.1')
+ax2.set_title('von neumann: p = 0.1')
+ax3.set_title('second renyi: p = 0.1')
+for g_t in g_type:
+    exp1 = Experiment(g_t, repeats, p, {'bond_dim': 0, 'vn': N//2, 'renyi': [2, N//2]}, 
+                      layers, N, in_state = 'zero')
+    exp1.run_experiment()
+    ax1.plot(np.arange(1,layers+1,1), np.log2(exp1.data[0]), label=g_t)
+    ax2.plot(np.arange(1,layers//2+1,1), exp1.data[1][np.arange(0,layers,2)], label=g_t)
+    ax3.plot(np.arange(1,layers//2+1,1), exp1.data[2][np.arange(0,layers,2)], label=g_t)
+ax1.legend(loc="lower right")
+ax1.legend(loc="lower right")
+ax2.legend(loc="lower right")
+ax3.legend(loc="lower right")
+fig1.show()
+fig2.show()
+fig3.show()
+#%%
+u1 = make_unitary(2, 0, 1); u2 = make_unitary(2, 0, 1)
+u1 = dephase(u1); u2 = dephase(u2)
+gate = np.zeros((4,4), dtype='complex')
+for i in range(2):
+    for j in range(2):
+        gate[3*i, 3*j] = u1[i,j]
+        gate[i+1, j+1] = u2[i,j]
